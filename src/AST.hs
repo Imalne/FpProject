@@ -23,6 +23,7 @@ data Type
   | TArrow Type Type
   -- ^箭头类型，这是函数具有的类型。在 @TArrow t1 t2@ 构成的函数类型里，@t1@ 表示函数的参数类型，@t2@ 表示函数的返回值类型。
 
+
   | TData String
   -- ^代数数据类型。@TData adtName@ 中的 @adtName@ 是该类型的名称。
 
