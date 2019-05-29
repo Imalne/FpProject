@@ -9,11 +9,11 @@ data Value
   = VBool Bool
   | VInt Int
   | VChar Char
-  | VFunc Expr
+  | VExpr Expr [(String,Value)]
   -- ... more
   deriving (Show, Eq)
 
-data Context = Context { variableMap :: M.Map String Value,fp::Maybe Expr-- 可以用某种方式定义上下文，用于记录变量绑定状态
+data Context = Context { variableMap :: M.Map String Value,fp::Maybe Value-- 可以用某种方式定义上下文，用于记录变量绑定状态
                           } deriving (Show, Eq)
 
 type ContextState a = StateT Context Maybe a
@@ -35,6 +35,40 @@ vCompareInt op (VInt v1) (VInt v2)  = return $ VBool (op v1 v2)
 
 vCompareChar op (VInt v1) (VInt v2)  = return $ VBool (op v1 v2)
 
+withVar :: String -> Value -> ContextState Value -> ContextState Value
+withVar n v op = do
+  -- push local variable
+  ctx <- get
+  put (Context (M.insert n v (variableMap ctx)) (fp ctx))
+  -- do the operation
+  result <- op
+  -- pop local variable out
+  put ctx
+  return result
+
+withVars :: [(String,Value)] -> ContextState Value -> ContextState Value
+withVars ((name,value):xs) op = 
+  withVar name value (withVars xs op)
+withVars [] op = do
+  result <- op
+  return result
+
+withFP :: Value -> ContextState Value -> ContextState Value
+withFP v op = do
+  ctx <- get
+  put (Context (variableMap ctx) (Just v))
+  result <- op
+  put ctx
+  return result
+
+getFP :: ContextState Value
+getFP = do
+  ctx <- get
+  case fp ctx of
+    Just value -> 
+      put (Context (variableMap ctx) Nothing) >>
+      return value
+    _ -> lift Nothing
 
 eval :: Expr -> ContextState Value
 eval (EBoolLit b) = return $ VBool b
@@ -137,8 +171,30 @@ eval (EIf e1 e2 e3) = do
     (VBool False) -> eval e3
     _ -> lift Nothing
     
+eval (ELambda (vName,vt) e) = do
+  ctx <- get
+  case (fp ctx) of
+    Nothing -> do
+      return (VExpr (ELambda (vName,vt) e) [])
+    Just value -> do
+      v <- getFP
+      re <- withVar vName v (eval e)
+      case re of
+        VExpr expr acc -> return (VExpr expr ((vName,value):acc))
+        _ -> return re
 
-eval _ = undefined
+
+eval (EVar vName) = do
+  ctx <- get
+  case ((variableMap ctx) M.!? vName) of 
+    Nothing -> lift Nothing
+    Just v -> return v
+
+eval (EApply e1 e2) = do
+  VExpr expr locals <- eval e1
+  v <- eval e2
+  result <- withVars locals (withFP v (eval expr) )
+  return result
 
 evalProgram :: Program -> Maybe Value
 evalProgram (Program adts body) = evalStateT (eval body) $
