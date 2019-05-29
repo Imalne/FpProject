@@ -33,7 +33,7 @@ getBool e = do
 vCompareInt :: ( Int -> Int-> Bool)-> Value -> Value -> ContextState Value
 vCompareInt op (VInt v1) (VInt v2)  = return $ VBool (op v1 v2)
 
-vCompareChar op (VInt v1) (VInt v2)  = return $ VBool (op v1 v2)
+vCompareChar op (VChar v1) (VChar v2)  = return $ VBool (op v1 v2)
 
 withVar :: String -> Value -> ContextState Value -> ContextState Value
 withVar n v op = do
@@ -139,6 +139,7 @@ eval (ELt e1 e2) = do
   case v1 of
     (VInt v) -> vCompareInt (<) v1 v2
     _ -> vCompareChar (<) v1 v2
+    -- _ -> vCompareChar (<) v1 v2
 
 eval (EGt e1 e2) = do
   v1 <- eval e1
@@ -184,6 +185,16 @@ eval (ELambda (vName,vt) e) = do
         _ -> return re
 
 
+eval (ELet (vName,vexpr) expr) = do
+  variabelValue <- eval vexpr
+  re <- withVar vName variabelValue (eval expr)
+  return re
+
+eval (ELetRec funcName (v , vt) (fexpr , ft) expr) = do
+  func <- eval (ELambda (v,vt) fexpr)
+  re <- withVar funcName func (eval expr)
+  return re
+
 eval (EVar vName) = do
   ctx <- get
   case ((variableMap ctx) M.!? vName) of 
@@ -194,7 +205,9 @@ eval (EApply e1 e2) = do
   VExpr expr locals <- eval e1
   v <- eval e2
   result <- withVars locals (withFP v (eval expr) )
-  return result
+  case result of
+    VExpr expr newlocals -> return (VExpr expr (locals ++ newlocals))
+    _ -> return result
 
 evalProgram :: Program -> Maybe Value
 evalProgram (Program adts body) = evalStateT (eval body) $
