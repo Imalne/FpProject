@@ -73,6 +73,9 @@ withVar x t op = do
   put ctx
   return result 
 
+withVars :: [(String,Type)] -> ContextState Type -> ContextState Type
+withVars ((vName,vt):vs) op = withVar vName vt (withVars vs op)
+withVars [] op = op
 
 -- operation with local function 
 withFunc :: String -> Type -> Type -> ContextState Type -> ContextState Type
@@ -100,48 +103,6 @@ checkFuncApply vt (TArrow t1 t2) = case vt == t1 of
   True -> return t2
   False -> lift  Nothing
 
-patternTypeEqual :: Pattern -> Type -> ContextState Bool
-patternTypeEqual p1 t =
-  case p1 of 
-    PBoolLit b -> return (TBool == t)
-    PIntLit i -> return (TInt == t)
-    PCharLit c -> return (TChar == t)
-    PVar s -> return True
-    PData string ps -> constructorPatternValid (PData string ps)
-
-caseTypeEqual :: [Pattern] -> Type -> ContextState Bool
-caseTypeEqual (p:ps) t = do
-  b <- patternTypeEqual p t
-  bs <- caseTypeEqual ps t
-  return b && bs
-caseTypeEqual [] t = return True
-
-
-patternsTypeEqual :: [Pattern] -> [Type] -> Bool -> ContextState Bool
-patternsTypeEqual (p:ps) (t:ts) acc= do
-  eq <- (patternTypeEqual p t)
-  patternsTypeEqual ps ts (eq && acc)
-patternsTypeEqual [] [] acc = return acc
-
-constructorPatternValid :: Pattern -> ContextState Bool
-constructorPatternValid (PData string ps) = do
-  ctx <- get
-  case ((constructors ctx) M.!? string) of
-    Just ts -> case (length ts /= length ps) of
-      False -> (patternsTypeEqual ps ts True)
-      _ -> return False
-    _ -> return False
-
-
-
-reTypeEqual :: [(Pattern,Expr)] -> Type -> ContextState Type
-reTypeEqual ((pt,expr):ps) ptType = do
-  case pt of
-    PVar nName -> do
-      et <- withVar nName ptType (eval expr)
-      return et
-    PData dName ps -> do
-      
 eval :: Expr -> ContextState Type
 eval (EBoolLit _) = return TBool
 eval (EIntLit _) = return TInt
@@ -199,18 +160,25 @@ eval (EApply e1 e2) = do
 
 eval (ECase expr ps) = do
   et <- eval expr
-  pcheck <- caseTypeEqual (fst $ unzip ps) et
-  case pcheck of
-    False -> lift Nothing
-    _ -> do 
-      echeck <- reTypeEqual ps
-eval _ = undefined
+  checkPatternsType (fst $ unzip ps) (replicate (length ps) et)
+  rt <- checkPatternExprTypes ps et
+  return rt
 
+-- eval _ = undefined
 
 evalType :: Program -> Maybe Type
-evalType (Program adts body) = evalStateT (eval body) $
-  (Context (M.fromList []) (M.fromList (constructorTypesFromADTs adts)) (M.fromList (constructorContentFromADTs adts))) -- 可以用某种方式定义上下文，用于记录变量绑定状态
+evalType (Program adts body) = evalStateT (eval body) $ (Context (M.fromList $ adtsApplys adts) (M.fromList $ constructorTypesFromADTs adts) (M.fromList $ constructorContentFromADTs adts)) -- 可以用某种方式定义上下文，用于记录变量绑定状态
 
+conApply dt (t:[]) = TArrow t dt
+conApply dt (t:ts) = TArrow t (conApply dt ts)
+
+conApplys dt ((name,ts):cons) = (name ,(conApply dt ts)) : (conApplys dt cons)
+conApplys dt [] = []
+
+adtApplys (ADT name cons) = conApplys (TData name) cons
+
+adtsApplys [] = []
+adtsApplys (adt:adts) = (adtApplys adt) ++ (adtsApplys adts)
 
 constructorTypesFromADT (ADT name ax) = foldl (\acc x-> (x,TData name) : acc) [] (fst $ unzip ax)
 constructorTypesFromADTs adts = foldl (\acc x -> (constructorTypesFromADT x) ++ acc) [] adts
@@ -218,4 +186,90 @@ constructorTypesFromADTs adts = foldl (\acc x -> (constructorTypesFromADT x) ++ 
 constructorContentFromADT (ADT name ax) = ax
 constructorContentFromADTs adts = foldl (\acc x -> (constructorContentFromADT x) ++ acc) [] adts
 
-simpleEvalExpr expr = evalType (Program [] expr)
+point = (ADT "Point" [("point",[TInt,TInt])])
+line = (ADT "line" [("points",[TData "Point",TData "Point"]),("kb",[TInt ,TInt ])])
+person = ADT "Person" [("man",[TInt,TBool]),("woman",[TChar,TBool])]
+adts = [line,person,point]
+simpleEvalExpr expr = evalType (Program adts expr)
+
+
+checkPDataType :: Pattern -> ContextState Type
+checkPDataType (PData s ps) = do
+  ctx <- get
+  case ((constructors ctx) M.!? s) of
+    Nothing -> lift Nothing
+    Just ts -> checkPatternsType ps ts >> case ((constructorTypeMap ctx) M.!? s) of
+      Just t -> return t
+      Nothing -> lift Nothing
+
+
+checkPatternsType :: [Pattern] -> [Type] -> ContextState Type
+checkPatternsType (p:ps) (t:ts) = do 
+  pType <- (checkPatternType p t)
+  psType <- (checkPatternsType ps ts)
+  return psType
+checkPatternsType [] [] = do
+  return TBool
+
+
+checkPatternType :: Pattern -> Type -> ContextState Type
+checkPatternType p t = do
+  case p of
+    PBoolLit b -> 
+      case (t == TBool) of
+        True -> return TBool
+        _ -> lift Nothing
+    PIntLit i -> 
+      case (t == TInt) of
+        True -> return TInt
+        _ -> lift Nothing
+    PCharLit c -> 
+      case (t == TChar) of
+        True -> return TChar
+        _ -> lift Nothing
+    PVar s -> return t
+    PData cons ps -> do
+      ctx <- get
+      case ((constructorTypeMap ctx) M.!? cons) of
+        Nothing -> lift Nothing
+        Just dt -> case dt == t of
+          True -> checkPDataType (PData cons ps)
+          False -> lift Nothing
+
+
+getVarInPData :: Pattern -> Type -> ContextState [(String,Type)]
+getVarInPData (PData cons ps) t = do
+  ctx <- get
+  case ((constructors ctx) M.!? cons) of
+    Just ts -> getVarInPatterns ps ts
+
+getVarInPatterns :: [Pattern] -> [Type] -> ContextState [(String,Type)]
+getVarInPatterns (p:ps) (t:ts) = do
+  varP <- getVarInPattern p t
+  varPs <- getVarInPatterns ps ts
+  return (varP ++ varPs)
+getVarInPatterns [] [] = do
+  return []
+
+getVarInPattern :: Pattern -> Type -> ContextState [(String,Type)]
+getVarInPattern p t = do
+  case p of
+    PVar vName -> return [(vName,t)] 
+    PData cons ps -> getVarInPData p t
+    _ -> return []
+
+getPatternExprType :: Pattern -> Type -> Expr -> ContextState Type
+getPatternExprType p pt expr = do
+  vars <- getVarInPattern p pt
+  withVars vars (eval expr)
+
+checkPatternExprTypes :: [(Pattern,Expr)] -> Type -> ContextState Type
+checkPatternExprTypes ((p,expr):[]) pt = do
+  t <- getPatternExprType p pt expr
+  return t
+checkPatternExprTypes ((p,expr):pes) pt = do
+  t1 <- getPatternExprType p pt expr
+  t2 <- checkPatternExprTypes pes pt
+  case t1 == t2 of
+    False -> lift Nothing
+    True -> return t1

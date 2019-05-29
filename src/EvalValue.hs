@@ -209,6 +209,7 @@ eval (EApply e1 e2) = do
     VExpr expr newlocals -> return (VExpr expr (locals ++ newlocals))
     _ -> return result
 
+
 evalProgram :: Program -> Maybe Value
 evalProgram (Program adts body) = evalStateT (eval body) $
   Context (M.fromList []) Nothing  -- 可以用某种方式定义上下文，用于记录变量绑定状态
