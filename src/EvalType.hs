@@ -5,7 +5,9 @@ import AST
 import Control.Monad.State
 import qualified Data.Map.Strict as M
 
-data Context = Context { variableMap :: M.Map String Type -- 可以用某种方式定义上下文，用于记录变量绑定状态
+data Context = Context { variableMap :: M.Map String Type,
+                          constructorTypeMap :: M.Map String Type,
+                          constructors :: M.Map String [Type]  -- 可以用某种方式定义上下文，用于记录变量绑定状态
                        }
   deriving (Show, Eq)
 
@@ -62,7 +64,7 @@ withVar :: String -> Type -> ContextState Type -> ContextState Type
 withVar x t op = do
   -- push local variable
   ctx <- get
-  put (Context  $ M.insert x t (variableMap ctx) )
+  put (Context  (M.insert x t (variableMap ctx))  (constructorTypeMap ctx) (constructors ctx) )
 
   -- do the operation
   result <- op
@@ -76,7 +78,7 @@ withVar x t op = do
 withFunc :: String -> Type -> Type -> ContextState Type -> ContextState Type
 withFunc x t1 t2 op = do
   ctx <- get
-  put (Context $ M.insert x (TArrow t1 t2) (variableMap ctx))
+  put (Context (M.insert x (TArrow t1 t2) (variableMap ctx))   (constructorTypeMap ctx) (constructors ctx) )
 
   result <- op
 
@@ -86,7 +88,7 @@ withFunc x t1 t2 op = do
 checkFuncRetType :: String -> String -> Type -> Expr -> Type -> ContextState Type
 checkFuncRetType funcName vName vt expr rt = do
   ctx <- get
-  put $ Context (M.insert funcName (TArrow vt rt) (variableMap ctx))
+  put $ (Context (M.insert funcName (TArrow vt rt) (variableMap ctx))   (constructorTypeMap ctx) (constructors ctx) )
   et <- withVar vName vt (eval expr)
   put ctx
   case et == rt of
@@ -98,7 +100,48 @@ checkFuncApply vt (TArrow t1 t2) = case vt == t1 of
   True -> return t2
   False -> lift  Nothing
 
+patternTypeEqual :: Pattern -> Type -> ContextState Bool
+patternTypeEqual p1 t =
+  case p1 of 
+    PBoolLit b -> return (TBool == t)
+    PIntLit i -> return (TInt == t)
+    PCharLit c -> return (TChar == t)
+    PVar s -> return True
+    PData string ps -> constructorPatternValid (PData string ps)
 
+caseTypeEqual :: [Pattern] -> Type -> ContextState Bool
+caseTypeEqual (p:ps) t = do
+  b <- patternTypeEqual p t
+  bs <- caseTypeEqual ps t
+  return b && bs
+caseTypeEqual [] t = return True
+
+
+patternsTypeEqual :: [Pattern] -> [Type] -> Bool -> ContextState Bool
+patternsTypeEqual (p:ps) (t:ts) acc= do
+  eq <- (patternTypeEqual p t)
+  patternsTypeEqual ps ts (eq && acc)
+patternsTypeEqual [] [] acc = return acc
+
+constructorPatternValid :: Pattern -> ContextState Bool
+constructorPatternValid (PData string ps) = do
+  ctx <- get
+  case ((constructors ctx) M.!? string) of
+    Just ts -> case (length ts /= length ps) of
+      False -> (patternsTypeEqual ps ts True)
+      _ -> return False
+    _ -> return False
+
+
+
+reTypeEqual :: [(Pattern,Expr)] -> Type -> ContextState Type
+reTypeEqual ((pt,expr):ps) ptType = do
+  case pt of
+    PVar nName -> do
+      et <- withVar nName ptType (eval expr)
+      return et
+    PData dName ps -> do
+      
 eval :: Expr -> ContextState Type
 eval (EBoolLit _) = return TBool
 eval (EIntLit _) = return TInt
@@ -154,17 +197,25 @@ eval (EApply e1 e2) = do
     (TArrow t1 t2) -> checkFuncApply vt ft
     _ -> lift Nothing
 
--- eval (EApply e1 e2) = do
---   ft <- eval e1
---   vt <- eval e2
---   case ft 
--- ... more
+eval (ECase expr ps) = do
+  et <- eval expr
+  pcheck <- caseTypeEqual (fst $ unzip ps) et
+  case pcheck of
+    False -> lift Nothing
+    _ -> do 
+      echeck <- reTypeEqual ps
 eval _ = undefined
 
 
 evalType :: Program -> Maybe Type
 evalType (Program adts body) = evalStateT (eval body) $
-  (Context (M.fromList [])) -- 可以用某种方式定义上下文，用于记录变量绑定状态
+  (Context (M.fromList []) (M.fromList (constructorTypesFromADTs adts)) (M.fromList (constructorContentFromADTs adts))) -- 可以用某种方式定义上下文，用于记录变量绑定状态
 
+
+constructorTypesFromADT (ADT name ax) = foldl (\acc x-> (x,TData name) : acc) [] (fst $ unzip ax)
+constructorTypesFromADTs adts = foldl (\acc x -> (constructorTypesFromADT x) ++ acc) [] adts
+
+constructorContentFromADT (ADT name ax) = ax
+constructorContentFromADTs adts = foldl (\acc x -> (constructorContentFromADT x) ++ acc) [] adts
 
 simpleEvalExpr expr = evalType (Program [] expr)
