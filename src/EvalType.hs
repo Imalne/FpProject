@@ -6,8 +6,8 @@ import Control.Monad.State
 import qualified Data.Map.Strict as M
 
 data Context = Context { variableMap :: M.Map String Type,
-                          constructorTypeMap :: M.Map String Type,
-                          constructors :: M.Map String [Type]  -- 可以用某种方式定义上下文，用于记录变量绑定状态
+                          constructorTypeMap :: M.Map String Type,  -- 构造函数和adt 类型的映射
+                          constructors :: M.Map String [Type]  -- 构造函数和需要的类型数组
                        }
   deriving (Show, Eq)
 
@@ -164,22 +164,41 @@ eval (ECase expr ps) = do
   rt <- checkPatternExprTypes ps et
   return rt
 
+eval (EData cons exprs) = do
+  ctx <- get
+  case ((constructorTypeMap ctx) M.!? cons) of
+    Just ct ->
+      case ((constructors ctx) M.!? cons) of
+        Just ts -> case ((length exprs) == (length ts)) of
+          True -> do 
+            checkEDataTypes exprs ts
+            return $ ct
+          False -> lift Nothing 
+        Nothing -> lift Nothing
+    Nothing -> lift Nothing
+
 -- eval _ = undefined
 
 evalType :: Program -> Maybe Type
 evalType (Program adts body) = evalStateT (eval body) $ (Context (M.fromList $ adtsApplys adts) (M.fromList $ constructorTypesFromADTs adts) (M.fromList $ constructorContentFromADTs adts)) -- 可以用某种方式定义上下文，用于记录变量绑定状态
 
+-- 生成 构造函数的类型 dt：最终类型
 conApply dt (t:[]) = TArrow t dt
 conApply dt (t:ts) = TArrow t (conApply dt ts)
 
+-- 生成 一列构造函数的类型
 conApplys dt ((name,ts):cons) = (name ,(conApply dt ts)) : (conApplys dt cons)
 conApplys dt [] = []
 
+-- 生成adt的所有构造函数的类型
 adtApplys (ADT name cons) = conApplys (TData name) cons
 
+-- 生成一列adt的所有构造函数的类型
 adtsApplys [] = []
 adtsApplys (adt:adts) = (adtApplys adt) ++ (adtsApplys adts)
 
+
+-- 生成 adt 相关的全局环境
 constructorTypesFromADT (ADT name ax) = foldl (\acc x-> (x,TData name) : acc) [] (fst $ unzip ax)
 constructorTypesFromADTs adts = foldl (\acc x -> (constructorTypesFromADT x) ++ acc) [] adts
 
@@ -193,6 +212,7 @@ adts = [line,person,point]
 simpleEvalExpr expr = evalType (Program adts expr)
 
 
+-- 检查代数数据类型的模式和构造函数类型一样
 checkPDataType :: Pattern -> ContextState Type
 checkPDataType (PData s ps) = do
   ctx <- get
@@ -202,7 +222,7 @@ checkPDataType (PData s ps) = do
       Just t -> return t
       Nothing -> lift Nothing
 
-
+-- 检查一列模式的类型
 checkPatternsType :: [Pattern] -> [Type] -> ContextState Type
 checkPatternsType (p:ps) (t:ts) = do 
   pType <- (checkPatternType p t)
@@ -211,7 +231,7 @@ checkPatternsType (p:ps) (t:ts) = do
 checkPatternsType [] [] = do
   return TBool
 
-
+-- 检查单个模式的
 checkPatternType :: Pattern -> Type -> ContextState Type
 checkPatternType p t = do
   case p of
@@ -273,3 +293,20 @@ checkPatternExprTypes ((p,expr):pes) pt = do
   case t1 == t2 of
     False -> lift Nothing
     True -> return t1
+
+
+checkDataType :: Expr -> Type -> ContextState Type
+checkDataType e t = do
+  et <- eval e
+  case et == t of
+    True -> return et
+    False -> lift Nothing
+
+checkEDataTypes :: [Expr] -> [Type] -> ContextState [Type]
+checkEDataTypes (e:es) (t:ts) = do
+  et <- checkDataType e t
+  est <- checkEDataTypes es ts
+  return (et: est)
+checkEDataTypes [] [] = do
+  return []
+

@@ -10,10 +10,14 @@ data Value
   | VInt Int
   | VChar Char
   | VExpr Expr [(String,Value)]
+  | VData String [Value]
   -- ... more
   deriving (Show, Eq)
 
-data Context = Context { variableMap :: M.Map String Value,fp::Maybe Value-- 可以用某种方式定义上下文，用于记录变量绑定状态
+data Context = Context { variableMap :: M.Map String Value,
+                         fp::Maybe Value,
+                         constructorFuncMap :: M.Map String Value
+                         -- 可以用某种方式定义上下文，用于记录变量绑定状态
                           } deriving (Show, Eq)
 
 type ContextState a = StateT Context Maybe a
@@ -39,7 +43,7 @@ withVar :: String -> Value -> ContextState Value -> ContextState Value
 withVar n v op = do
   -- push local variable
   ctx <- get
-  put (Context (M.insert n v (variableMap ctx)) (fp ctx))
+  put (Context (M.insert n v (variableMap ctx)) (fp ctx) (constructorFuncMap ctx))
   -- do the operation
   result <- op
   -- pop local variable out
@@ -56,7 +60,7 @@ withVars [] op = do
 withFP :: Value -> ContextState Value -> ContextState Value
 withFP v op = do
   ctx <- get
-  put (Context (variableMap ctx) (Just v))
+  put (Context (variableMap ctx) (Just v) (constructorFuncMap ctx) )
   result <- op
   put ctx
   return result
@@ -66,7 +70,7 @@ getFP = do
   ctx <- get
   case fp ctx of
     Just value -> 
-      put (Context (variableMap ctx) Nothing) >>
+      put (Context (variableMap ctx) Nothing (constructorFuncMap ctx)) >>
       return value
     _ -> lift Nothing
 
@@ -210,9 +214,81 @@ eval (EApply e1 e2) = do
     _ -> return result
 
 
+eval (ECase expr pes) = do
+  ev <- eval expr
+  result <- evalMatchPattern ev pes
+  return result
+
+  
+eval (EData cons es) = do
+  esv <- evalExprs es
+  return (VData cons esv)
+
+patternEqual :: Value -> Pattern -> ContextState Bool
+patternEqual (VData vcons vs) (PData pcons ps) = do
+  case vcons == pcons of 
+    True -> do
+      vsEqual <- patternsEqual vs ps
+      return vsEqual
+    False -> return False
+patternEqual _ (PVar vName) = do
+  return True
+patternEqual (VInt vv) (PIntLit pv) = do
+  return $ vv == pv
+patternEqual (VBool vv) (PBoolLit pv) = do
+  return $ vv == pv
+patternEqual (VChar vv) (PCharLit pv) = do
+  return $ vv == pv
+patternEqual _ _  = do
+  return False
+
+patternsEqual :: [Value] -> [Pattern] -> ContextState Bool
+patternsEqual (v:vs) (p:ps)  = do
+  vv <- patternEqual v p
+  vsv <- patternsEqual vs ps
+  return (vv && vsv)
+patternsEqual [] [] = do
+  return True
+
+
+evalMatchPattern :: Value -> [(Pattern,Expr)] -> ContextState Value
+evalMatchPattern v ((p,e):pes) = do
+  pm <- patternEqual v p
+  case pm of
+    False -> evalMatchPattern v pes
+    True -> evalInPattern v p (eval e)
+evalMatchPattern _ [] = do
+  lift Nothing
+  
+evalInPattern :: Value -> Pattern -> ContextState Value -> ContextState Value
+evalInPattern v (PVar name) op  = do
+  vv <- withVar name v op
+  return vv
+evalInPattern (VData vcons vs) (PData pcons ps) op= do
+  vv <- evalInPatterns vs ps op
+  return vv
+evalInPattern v _ op = op
+
+evalInPatterns :: [Value] -> [Pattern] -> ContextState Value -> ContextState Value
+evalInPatterns (v:vs) (p:ps) op = do
+  vv <- evalInPattern v p (evalInPatterns vs ps op)
+  return vv
+evalInPatterns [] [] op = do
+  vv <- op
+  return vv
+
+
+evalExprs :: [Expr] -> ContextState [Value]
+evalExprs (e:es) = do
+  ev <- eval e
+  esv <- evalExprs es
+  return (ev:esv)
+evalExprs [] = do
+  return []
+
 evalProgram :: Program -> Maybe Value
 evalProgram (Program adts body) = evalStateT (eval body) $
-  Context (M.fromList []) Nothing  -- 可以用某种方式定义上下文，用于记录变量绑定状态
+  Context (M.fromList []) Nothing (M.fromList []) -- 可以用某种方式定义上下文，用于记录变量绑定状态
 
 
 evalValue :: Program -> Result
