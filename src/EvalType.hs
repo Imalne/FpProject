@@ -186,7 +186,7 @@ evalType :: Program -> Maybe Type
 evalType (Program adts body) = evalStateT (eval body) $ (Context (M.fromList $ []) (M.fromList $ constructorTypesFromADTs adts) (M.fromList $ constructorContentFromADTs adts) (M.fromList $ getADTsConsFuncsType adts)) -- 可以用某种方式定义上下文，用于记录变量绑定状态
 
 -- 生成 构造函数的类型 dt：最终类型
-conApply dt (t:[]) = TArrow t dt
+conApply dt [] = dt
 conApply dt (t:ts) = TArrow t (conApply dt ts)
 
 -- 生成 一列构造函数的类型
