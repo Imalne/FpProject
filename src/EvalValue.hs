@@ -16,7 +16,7 @@ data Value
 
 data Context = Context { variableMap :: M.Map String Value,
                          fp::Maybe Value,
-                         constructorFuncMap :: M.Map String Value
+                         constructorFuncMap :: M.Map String Expr
                          -- 可以用某种方式定义上下文，用于记录变量绑定状态
                           } deriving (Show, Eq)
 
@@ -202,7 +202,12 @@ eval (ELetRec funcName (v , vt) (fexpr , ft) expr) = do
 eval (EVar vName) = do
   ctx <- get
   case ((variableMap ctx) M.!? vName) of 
-    Nothing -> lift Nothing
+    Nothing -> 
+      case ((constructorFuncMap ctx) M.!? vName) of
+        Nothing -> lift Nothing
+        Just v -> do
+          vv <- eval v
+          return vv
     Just v -> return v
 
 eval (EApply e1 e2) = do
@@ -288,7 +293,7 @@ evalExprs [] = do
 
 evalProgram :: Program -> Maybe Value
 evalProgram (Program adts body) = evalStateT (eval body) $
-  Context (M.fromList []) Nothing (M.fromList []) -- 可以用某种方式定义上下文，用于记录变量绑定状态
+  Context (M.fromList []) Nothing (M.fromList $ getADTsConsFuncs adts) -- 可以用某种方式定义上下文，用于记录变量绑定状态
 
 
 evalValue :: Program -> Result
@@ -298,4 +303,28 @@ evalValue p = case evalProgram p of
   Just (VChar c) -> RChar c
   _ -> RInvalid
 
-simpleValue expr = evalProgram (Program [] expr)
+point = (ADT "Point" [("point",[TInt,TInt])])
+line = (ADT "line" [("points",[TData "Point",TData "Point"]),("kb",[TInt ,TInt ])])
+person = ADT "Person" [("man",[TInt,TBool]),("woman",[TChar,TBool])]
+adts = [line,person,point]
+
+simpleValue expr = evalProgram (Program adts expr)
+
+getADTsConsFuncs (adt:adts) = (getADTConsFuncs adt) ++ (getADTsConsFuncs adts)
+getADTsConsFuncs [] = []
+
+getADTConsFuncs (ADT typeName cs) = getConsFuncLambdas cs
+
+getConsFuncLambdas ((name,types):cs) = (name,(getConsFuncLambda name types types)):(getConsFuncLambdas cs)
+getConsFuncLambdas [] = []
+
+getConsFuncBody :: String -> [Type] -> Expr
+getConsFuncBody name types = EData name (getConsFuncParameter types (length types))
+
+getConsFuncParameter :: [Type] -> Int -> [Expr]
+getConsFuncParameter (t:ts) acc= (EVar (show acc)):(getConsFuncParameter ts (acc-1))
+getConsFuncParameter _ 0 = []
+getConsFuncParameter [] acc = []
+
+getConsFuncLambda name (t:ts) total = ELambda (show $ length(t:ts),t) (getConsFuncLambda name ts total)
+getConsFuncLambda name [] total = getConsFuncBody name total

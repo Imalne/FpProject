@@ -6,8 +6,9 @@ import Control.Monad.State
 import qualified Data.Map.Strict as M
 
 data Context = Context { variableMap :: M.Map String Type,
-                          constructorTypeMap :: M.Map String Type,  -- 构造函数和adt 类型的映射
-                          constructors :: M.Map String [Type]  -- 构造函数和需要的类型数组
+                          eDataTypeMap :: M.Map String Type,  -- 构造函数和adt 类型的映射
+                          constructors :: M.Map String [Type],  -- 构造函数和需要的类型数组
+                          constructorTypeMap :: M.Map String Type 
                        }
   deriving (Show, Eq)
 
@@ -64,7 +65,7 @@ withVar :: String -> Type -> ContextState Type -> ContextState Type
 withVar x t op = do
   -- push local variable
   ctx <- get
-  put (Context  (M.insert x t (variableMap ctx))  (constructorTypeMap ctx) (constructors ctx) )
+  put (Context  (M.insert x t (variableMap ctx))  (eDataTypeMap ctx) (constructors ctx) (constructorTypeMap ctx))
 
   -- do the operation
   result <- op
@@ -81,7 +82,7 @@ withVars [] op = op
 withFunc :: String -> Type -> Type -> ContextState Type -> ContextState Type
 withFunc x t1 t2 op = do
   ctx <- get
-  put (Context (M.insert x (TArrow t1 t2) (variableMap ctx))   (constructorTypeMap ctx) (constructors ctx) )
+  put (Context (M.insert x (TArrow t1 t2) (variableMap ctx))   (eDataTypeMap ctx) (constructors ctx) (constructorTypeMap ctx))
 
   result <- op
 
@@ -91,7 +92,7 @@ withFunc x t1 t2 op = do
 checkFuncRetType :: String -> String -> Type -> Expr -> Type -> ContextState Type
 checkFuncRetType funcName vName vt expr rt = do
   ctx <- get
-  put $ (Context (M.insert funcName (TArrow vt rt) (variableMap ctx))   (constructorTypeMap ctx) (constructors ctx) )
+  put $ (Context (M.insert funcName (TArrow vt rt) (variableMap ctx))   (eDataTypeMap ctx) (constructors ctx) (constructorTypeMap ctx))
   et <- withVar vName vt (eval expr)
   put ctx
   case et == rt of
@@ -136,7 +137,9 @@ eval (ELambda (vName,vt) e) = do
 eval (EVar vName) = do
   ctx <- get
   case ((variableMap ctx) M.!? vName) of 
-    Nothing -> lift Nothing
+    Nothing -> case ((constructorTypeMap ctx) M.!? vName) of
+      Nothing -> lift Nothing
+      Just t -> return t
     Just t -> return t
 
 eval (ELet (vName, e1) e2) = do
@@ -166,7 +169,7 @@ eval (ECase expr ps) = do
 
 eval (EData cons exprs) = do
   ctx <- get
-  case ((constructorTypeMap ctx) M.!? cons) of
+  case ((eDataTypeMap ctx) M.!? cons) of
     Just ct ->
       case ((constructors ctx) M.!? cons) of
         Just ts -> case ((length exprs) == (length ts)) of
@@ -180,7 +183,7 @@ eval (EData cons exprs) = do
 -- eval _ = undefined
 
 evalType :: Program -> Maybe Type
-evalType (Program adts body) = evalStateT (eval body) $ (Context (M.fromList $ adtsApplys adts) (M.fromList $ constructorTypesFromADTs adts) (M.fromList $ constructorContentFromADTs adts)) -- 可以用某种方式定义上下文，用于记录变量绑定状态
+evalType (Program adts body) = evalStateT (eval body) $ (Context (M.fromList $ []) (M.fromList $ constructorTypesFromADTs adts) (M.fromList $ constructorContentFromADTs adts) (M.fromList $ getADTsConsFuncsType adts)) -- 可以用某种方式定义上下文，用于记录变量绑定状态
 
 -- 生成 构造函数的类型 dt：最终类型
 conApply dt (t:[]) = TArrow t dt
@@ -218,7 +221,7 @@ checkPDataType (PData s ps) = do
   ctx <- get
   case ((constructors ctx) M.!? s) of
     Nothing -> lift Nothing
-    Just ts -> checkPatternsType ps ts >> case ((constructorTypeMap ctx) M.!? s) of
+    Just ts -> checkPatternsType ps ts >> case ((eDataTypeMap ctx) M.!? s) of
       Just t -> return t
       Nothing -> lift Nothing
 
@@ -250,7 +253,7 @@ checkPatternType p t = do
     PVar s -> return t
     PData cons ps -> do
       ctx <- get
-      case ((constructorTypeMap ctx) M.!? cons) of
+      case ((eDataTypeMap ctx) M.!? cons) of
         Nothing -> lift Nothing
         Just dt -> case dt == t of
           True -> checkPDataType (PData cons ps)
@@ -310,3 +313,11 @@ checkEDataTypes (e:es) (t:ts) = do
 checkEDataTypes [] [] = do
   return []
 
+getADTsConsFuncsType (adt:adts) = (getAdtConsFuncsType adt) ++ (getADTsConsFuncsType adts)
+getADTsConsFuncsType [] = [] 
+
+getAdtConsFuncsType (ADT tname cs) = getConsFuncsType tname cs;
+getConsFuncsType tname ((name,ts):cs) = (name,(getConsFuncType tname (ts))):(getConsFuncsType tname cs)
+getConsFuncsType tname [] = []
+getConsFuncType tname (t:ts) = TArrow t (getConsFuncType tname ts)
+getConsFuncType tname [] = TData tname
