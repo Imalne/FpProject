@@ -250,7 +250,11 @@ checkPatternType p t = do
       case (t == TChar) of
         True -> return TChar
         _ -> lift Nothing
-    PVar s -> return t
+    PVar s -> do
+      ctx <- get
+      case ((variableMap ctx) M.!? s) of
+        Just et -> return et
+        Nothing -> return t
     PData cons ps -> do
       ctx <- get
       case ((eDataTypeMap ctx) M.!? cons) of
