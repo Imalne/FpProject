@@ -211,7 +211,9 @@ constructorContentFromADTs adts = foldl (\acc x -> (constructorContentFromADT x)
 point = (ADT "Point" [("point",[TInt,TInt])])
 line = (ADT "line" [("points",[TData "Point",TData "Point"]),("kb",[TInt ,TInt ])])
 person = ADT "Person" [("man",[TInt,TBool]),("woman",[TChar,TBool])]
-adts = [line,person,point]
+array = ADT "Array" [("Nil",[]),("Cons",[TInt ,(TData "Array")])]
+maybeInt = ADT "MaybeInt" [("JustInt",[TInt]),("Nothing",[])]
+adts = [line,person,point,array,maybeInt]
 simpleEvalExpr expr = evalType (Program adts expr)
 
 

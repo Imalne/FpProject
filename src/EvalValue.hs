@@ -306,7 +306,9 @@ evalValue p = case evalProgram p of
 point = (ADT "Point" [("point",[TInt,TInt])])
 line = (ADT "line" [("points",[TData "Point",TData "Point"]),("kb",[TInt ,TInt ])])
 person = ADT "Person" [("man",[TInt,TBool]),("woman",[TChar,TBool])]
-adts = [line,person,point]
+array = ADT "Array" [("Nil",[]),("Cons",[TInt ,(TData "Array")])]
+maybeInt = ADT "MaybeInt" [("JustInt",[TInt]),("Nothing",[])]
+adts = [line,person,point,array,maybeInt]
 
 simpleValue expr = evalProgram (Program adts expr)
 
