@@ -74,21 +74,21 @@ equalExpr = ELambda ("ys",TData "Array") (ECase (EVar "xs")
 equalbody = ELetRec "equal" ("xs",TData "Array") (equalExpr,(TArrow (TData "Array") TBool)) ((EApply (EApply (EVar "equal") (EVar "xss")) (EVar "yss")))
 equal = ELambda ("xss",TData "Array") (ELambda ("yss",TData "Array") (equalbody))
 
-
-
+array = ADT "Array" [("Nil",[]),("Cons",[TInt ,(TData "Array")])]
+maybeInt = ADT "MaybeInt" [("JustInt",[TInt]),("Nothing",[])]
 
 saveDiv Test:
-(EApply (EApply safeDiv (EIntLit 7)) (EIntLit 0))
-(EApply (EApply safeDiv (EIntLit 7)) (EIntLit 2))
+evalProgram (Program [array,maybeInt] (EApply (EApply safeDiv (EIntLit 7)) (EIntLit 0)))
+evalProgram (Program [array,maybeInt] (EApply (EApply safeDiv (EIntLit 7)) (EIntLit 2)))
 
 map Test:
-(EApply (EApply map sqrt) list)
+evalProgram (Program [array,maybeInt] (EApply (EApply map sqrt) list))
 
 filter Test:
-(EApply (EApply filter even) list)
+evalProgram (Program [array,maybeInt] (EApply (EApply filter even) list))
 
 equal Test:
-(EApply (EApply equal (EVar "Nil")) (EVar "Nil"))
-(EApply (EApply equal list12) list12)
-(EApply (EApply equal list12) list13)
-(EApply (EApply equal list12) list1)
+evalProgram (Program [array,maybeInt] (EApply (EApply equal (EVar "Nil")) (EVar "Nil")))
+evalProgram (Program [array,maybeInt] (EApply (EApply equal list12) list12))
+evalProgram (Program [array,maybeInt] (EApply (EApply equal list12) list13))
+evalProgram (Program [array,maybeInt] (EApply (EApply equal list12) list1))
